@@ -1,11 +1,14 @@
 #![allow(dead_code)]
 
-use std::error::Error;
 use std::io::Read;
 
-use super::binary_reader::BinaryReader;
-use super::soundfont_version::SoundFontVersion;
+use crate::binary_reader::BinaryReader;
+use crate::error::SoundFontError;
+use crate::four_cc::FourCC;
+use crate::read_counter::ReadCounter;
+use crate::soundfont_version::SoundFontVersion;
 
+/// The information of a SoundFont.
 #[non_exhaustive]
 pub struct SoundFontInfo {
     pub(crate) version: SoundFontVersion,
@@ -22,24 +25,22 @@ pub struct SoundFontInfo {
 }
 
 impl SoundFontInfo {
-    pub(crate) fn new<R: Read>(reader: &mut R) -> Result<Self, Box<dyn Error>> {
+    pub(crate) fn new<R: Read>(reader: &mut R) -> Result<Self, SoundFontError> {
         let chunk_id = BinaryReader::read_four_cc(reader)?;
-        if chunk_id != "LIST" {
-            return Err(format!("The LIST chunk was not found.").into());
+        if chunk_id != b"LIST" {
+            return Err(SoundFontError::ListChunkNotFound);
         }
 
-        let end = BinaryReader::read_i32(reader)?;
-
-        let mut pos: i32 = 0;
+        let end = BinaryReader::read_u32(reader)? as usize;
+        let reader = &mut ReadCounter::new(reader);
 
         let list_type = BinaryReader::read_four_cc(reader)?;
-        if list_type != "INFO" {
-            return Err(format!(
-                "The type of the LIST chunk must be 'INFO', but was '{list_type}'."
-            )
-            .into());
+        if list_type != b"INFO" {
+            return Err(SoundFontError::InvalidListChunkType {
+                expected: FourCC::from_bytes(*b"INFO"),
+                actual: list_type,
+            });
         }
-        pos += 4;
 
         let mut version: Option<SoundFontVersion> = None;
         let mut target_sound_engine: Option<String> = None;
@@ -53,152 +54,111 @@ impl SoundFontInfo {
         let mut comments: Option<String> = None;
         let mut tools: Option<String> = None;
 
-        while pos < end {
+        while reader.bytes_read() < end {
             let id = BinaryReader::read_four_cc(reader)?;
-            pos += 4;
+            let size = BinaryReader::read_u32(reader)? as usize;
 
-            let size = BinaryReader::read_i32(reader)?;
-            pos += 4;
-
-            if id == "ifil" {
-                version = Some(SoundFontVersion::new(reader)?);
-            } else if id == "isng" {
-                target_sound_engine = Some(BinaryReader::read_fixed_length_string(reader, size)?);
-            } else if id == "INAM" {
-                bank_name = Some(BinaryReader::read_fixed_length_string(reader, size)?);
-            } else if id == "irom" {
-                rom_name = Some(BinaryReader::read_fixed_length_string(reader, size)?);
-            } else if id == "iver" {
-                rom_version = Some(SoundFontVersion::new(reader)?);
-            } else if id == "ICRD" {
-                creation_date = Some(BinaryReader::read_fixed_length_string(reader, size)?);
-            } else if id == "IENG" {
-                author = Some(BinaryReader::read_fixed_length_string(reader, size)?);
-            } else if id == "IPRD" {
-                target_product = Some(BinaryReader::read_fixed_length_string(reader, size)?);
-            } else if id == "ICOP" {
-                copyright = Some(BinaryReader::read_fixed_length_string(reader, size)?);
-            } else if id == "ICMT" {
-                comments = Some(BinaryReader::read_fixed_length_string(reader, size)?);
-            } else if id == "ISFT" {
-                tools = Some(BinaryReader::read_fixed_length_string(reader, size)?);
-            } else {
-                return Err(format!("The INFO list contains an unknown ID '{id}'.").into());
+            match id.as_bytes() {
+                b"ifil" => version = Some(SoundFontVersion::new(reader)?),
+                b"isng" => {
+                    target_sound_engine =
+                        Some(BinaryReader::read_fixed_length_string(reader, size)?)
+                }
+                b"INAM" => bank_name = Some(BinaryReader::read_fixed_length_string(reader, size)?),
+                b"irom" => rom_name = Some(BinaryReader::read_fixed_length_string(reader, size)?),
+                b"iver" => rom_version = Some(SoundFontVersion::new(reader)?),
+                b"ICRD" => {
+                    creation_date = Some(BinaryReader::read_fixed_length_string(reader, size)?)
+                }
+                b"IENG" => author = Some(BinaryReader::read_fixed_length_string(reader, size)?),
+                b"IPRD" => {
+                    target_product = Some(BinaryReader::read_fixed_length_string(reader, size)?)
+                }
+                b"ICOP" => copyright = Some(BinaryReader::read_fixed_length_string(reader, size)?),
+                b"ICMT" => comments = Some(BinaryReader::read_fixed_length_string(reader, size)?),
+                b"ISFT" => tools = Some(BinaryReader::read_fixed_length_string(reader, size)?),
+                _ => return Err(SoundFontError::ListContainsUnknownId(id)),
             }
-
-            pos += size;
         }
 
-        let version = match version {
-            Some(value) => value,
-            None => SoundFontVersion::default(),
-        };
-
-        let target_sound_engine = match target_sound_engine {
-            Some(value) => value,
-            None => String::new(),
-        };
-
-        let bank_name = match bank_name {
-            Some(value) => value,
-            None => String::new(),
-        };
-
-        let rom_name = match rom_name {
-            Some(value) => value,
-            None => String::new(),
-        };
-
-        let rom_version = match rom_version {
-            Some(value) => value,
-            None => SoundFontVersion::default(),
-        };
-
-        let creation_date = match creation_date {
-            Some(value) => value,
-            None => String::new(),
-        };
-
-        let author = match author {
-            Some(value) => value,
-            None => String::new(),
-        };
-
-        let target_product = match target_product {
-            Some(value) => value,
-            None => String::new(),
-        };
-
-        let copyright = match copyright {
-            Some(value) => value,
-            None => String::new(),
-        };
-
-        let comments = match comments {
-            Some(value) => value,
-            None => String::new(),
-        };
-
-        let tools = match tools {
-            Some(value) => value,
-            None => String::new(),
-        };
+        let version = version.unwrap_or_else(SoundFontVersion::default);
+        let target_sound_engine = target_sound_engine.unwrap_or_default();
+        let bank_name = bank_name.unwrap_or_default();
+        let rom_name = rom_name.unwrap_or_default();
+        let rom_version = rom_version.unwrap_or_else(SoundFontVersion::default);
+        let creation_date = creation_date.unwrap_or_default();
+        let author = author.unwrap_or_default();
+        let target_product = target_product.unwrap_or_default();
+        let copyright = copyright.unwrap_or_default();
+        let comments = comments.unwrap_or_default();
+        let tools = tools.unwrap_or_default();
 
         Ok(Self {
-            version: version,
-            target_sound_engine: target_sound_engine,
-            bank_name: bank_name,
-            rom_name: rom_name,
-            rom_version: rom_version,
-            creation_date: creation_date,
-            author: author,
-            target_product: target_product,
-            copyright: copyright,
-            comments: comments,
-            tools: tools,
+            version,
+            target_sound_engine,
+            bank_name,
+            rom_name,
+            rom_version,
+            creation_date,
+            author,
+            target_product,
+            copyright,
+            comments,
+            tools,
         })
     }
 
+    /// Gets the version of the SoundFont.
     pub fn get_version(&self) -> &SoundFontVersion {
         &self.version
     }
 
+    /// Gets the target sound engine of the SoundFont.
     pub fn get_target_sound_engine(&self) -> &str {
         &self.target_sound_engine
     }
 
+    /// Gets the bank name of the SoundFont.
     pub fn get_bank_name(&self) -> &str {
         &self.bank_name
     }
 
+    /// Gets the ROM name of the SoundFont.
     pub fn get_rom_name(&self) -> &str {
         &self.rom_name
     }
 
+    /// Gets the ROM version of the SoundFont.
     pub fn get_rom_version(&self) -> &SoundFontVersion {
         &self.rom_version
     }
 
+    /// Gets the creation date of the SoundFont.
     pub fn get_creation_date(&self) -> &str {
         &self.creation_date
     }
 
+    /// Gets the auther of the SoundFont.
     pub fn get_author(&self) -> &str {
         &self.author
     }
 
+    /// Gets the target product of the SoundFont.
     pub fn get_target_product(&self) -> &str {
         &self.target_product
     }
 
+    /// Gets the copyright message for the SoundFont.
     pub fn get_copyright(&self) -> &str {
         &self.copyright
     }
 
+    /// Gets the comments for the SoundFont.
     pub fn get_comments(&self) -> &str {
         &self.comments
     }
 
+    /// Gets the tools used to create the SoundFont.
     pub fn get_tools(&self) -> &str {
         &self.tools
     }

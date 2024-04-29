@@ -7,7 +7,7 @@ RustySynth is a SoundFont MIDI synthesizer written in pure Rust, ported from [Me
 ## Features
 
 * Suitable for both real-time and offline synthesis.
-* Support for standard MIDI files.
+* Supports standard MIDI files with additional features including dynamic tempo changing.
 * No dependencies other than the standard library.
 
 
@@ -19,7 +19,7 @@ An example code to synthesize a simple chord:
 ```rust
 // Load the SoundFont.
 let mut sf2 = File::open("TimGM6mb.sf2").unwrap();
-let sound_font = Rc::new(SoundFont::new(&mut sf2).unwrap());
+let sound_font = Arc::new(SoundFont::new(&mut sf2).unwrap());
 
 // Create the synthesizer.
 let settings = SynthesizerSettings::new(44100);
@@ -44,11 +44,11 @@ Another example code to synthesize a MIDI file:
 ```rust
 // Load the SoundFont.
 let mut sf2 = File::open("TimGM6mb.sf2").unwrap();
-let sound_font = Rc::new(SoundFont::new(&mut sf2).unwrap());
+let sound_font = Arc::new(SoundFont::new(&mut sf2).unwrap());
 
 // Load the MIDI file.
 let mut mid = File::open("flourish.mid").unwrap();
-let midi_file = Rc::new(MidiFile::new(&mut mid).unwrap());
+let midi_file = Arc::new(MidiFile::new(&mut mid).unwrap());
 
 // Create the MIDI file sequencer.
 let settings = SynthesizerSettings::new(44100);
@@ -94,6 +94,7 @@ sequencer.render(&mut left[..], &mut right[..]);
     - [x] Chorus
 * __Other things__
     - [x] Standard MIDI file support
+    - [x] MIDI file loop extension support
     - [x] Performace optimization
 
 

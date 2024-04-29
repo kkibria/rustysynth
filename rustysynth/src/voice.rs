@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 
 use std::f32::consts;
-use std::rc::Rc;
 
 use crate::bi_quad_filter::BiQuadFilter;
 use crate::channel::Channel;
@@ -17,7 +16,7 @@ use crate::volume_envelope::VolumeEnvelope;
 #[non_exhaustive]
 pub(crate) struct Voice {
     sample_rate: i32,
-    block_size: i32,
+    block_size: usize,
 
     vol_env: VolumeEnvelope,
     mod_env: ModulationEnvelope,
@@ -74,8 +73,8 @@ pub(crate) struct Voice {
     smoothed_cutoff: f32,
 
     voice_state: i32,
-    pub(crate) voice_length: i32,
-    min_voice_length: i32,
+    pub(crate) voice_length: usize,
+    min_voice_length: usize,
 }
 
 impl Voice {
@@ -89,7 +88,7 @@ impl Voice {
             mod_lfo: Lfo::new(settings),
             oscillator: Oscillator::new(settings),
             filter: BiQuadFilter::new(settings),
-            block: vec![0_f32; settings.block_size as usize],
+            block: vec![0_f32; settings.block_size],
             previous_mix_gain_left: 0_f32,
             previous_mix_gain_right: 0_f32,
             current_mix_gain_left: 0_f32,
@@ -119,18 +118,11 @@ impl Voice {
             smoothed_cutoff: 0_f32,
             voice_state: 0,
             voice_length: 0,
-            min_voice_length: settings.sample_rate / 500,
+            min_voice_length: (settings.sample_rate / 500) as usize,
         }
     }
 
-    pub(crate) fn start(
-        &mut self,
-        data: &Rc<Vec<i16>>,
-        region: &RegionPair,
-        channel: i32,
-        key: i32,
-        velocity: i32,
-    ) {
+    pub(crate) fn start(&mut self, region: &RegionPair, channel: i32, key: i32, velocity: i32) {
         self.exclusive_class = region.get_exclusive_class();
         self.channel = channel;
         self.key = key;
@@ -171,7 +163,7 @@ impl Voice {
         RegionEx::start_modulation_envelope(&mut self.mod_env, region, key, velocity);
         RegionEx::start_vibrato(&mut self.vib_lfo, region, key, velocity);
         RegionEx::start_modulation(&mut self.mod_lfo, region, key, velocity);
-        RegionEx::start_oscillator(&mut self.oscillator, data, region);
+        RegionEx::start_oscillator(&mut self.oscillator, region);
         self.filter.clear_buffer();
         self.filter.set_low_pass_filter(self.cutoff, self.resonance);
 
@@ -191,7 +183,7 @@ impl Voice {
         self.note_gain = 0_f32;
     }
 
-    pub(crate) fn process(&mut self, channels: &Vec<Channel>) -> bool {
+    pub(crate) fn process(&mut self, data: &[i16], channels: &[Channel]) -> bool {
         if self.note_gain < SoundFontMath::NON_AUDIBLE {
             return false;
         }
@@ -214,7 +206,7 @@ impl Voice {
             + self.mod_env_to_pitch * self.mod_env.get_value();
         let channel_pitch_change = channel_info.get_tune() + channel_info.get_pitch_bend();
         let pitch = self.key as f32 + vib_pitch_change + mod_pitch_change + channel_pitch_change;
-        if !self.oscillator.process(&mut self.block[..], pitch) {
+        if !self.oscillator.process(data, &mut self.block[..], pitch) {
             return false;
         }
 
@@ -282,7 +274,7 @@ impl Voice {
 
         self.voice_length += self.block_size;
 
-        return true;
+        true
     }
 
     fn release_if_necessary(&mut self, channel_info: &Channel) {
@@ -301,9 +293,9 @@ impl Voice {
 
     pub(crate) fn get_priority(&self) -> f32 {
         if self.note_gain < SoundFontMath::NON_AUDIBLE {
-            return 0_f32;
+            0_f32
         } else {
-            return self.vol_env.get_priority();
+            self.vol_env.get_priority()
         }
     }
 }

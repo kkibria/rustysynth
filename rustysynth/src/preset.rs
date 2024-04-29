@@ -1,12 +1,12 @@
 #![allow(dead_code)]
 
-use std::error::Error;
-
+use crate::error::SoundFontError;
 use crate::instrument::Instrument;
 use crate::preset_info::PresetInfo;
 use crate::preset_region::PresetRegion;
 use crate::zone::Zone;
 
+/// Represents a preset in the SoundFont.
 #[non_exhaustive]
 pub struct Preset {
     pub(crate) name: String,
@@ -21,76 +21,84 @@ pub struct Preset {
 impl Preset {
     fn new(
         info: &PresetInfo,
-        zones: &Vec<Zone>,
-        instruments: &Vec<Instrument>,
-    ) -> Result<Self, Box<dyn Error>> {
+        preset_id: usize,
+        zones: &[Zone],
+        instruments: &[Instrument],
+    ) -> Result<Self, SoundFontError> {
         let name = info.name.clone();
 
         let zone_count = info.zone_end_index - info.zone_start_index + 1;
         if zone_count <= 0 {
-            return Err(format!("The preset '{name}' has no zone.").into());
+            return Err(SoundFontError::InvalidPreset(preset_id));
         }
 
         let span_start = info.zone_start_index as usize;
         let span_end = span_start + zone_count as usize;
         let zone_span = &zones[span_start..span_end];
-        let regions = PresetRegion::create(&name, zone_span, &instruments)?;
+        let regions = PresetRegion::create(preset_id, zone_span, instruments)?;
 
         Ok(Self {
-            name: name,
+            name,
             patch_number: info.patch_number,
             bank_number: info.bank_number,
             library: info.library,
             genre: info.genre,
             morphology: info.morphology,
-            regions: regions,
+            regions,
         })
     }
 
     pub(crate) fn create(
-        infos: &Vec<PresetInfo>,
-        zones: &Vec<Zone>,
-        instruments: &Vec<Instrument>,
-    ) -> Result<Vec<Preset>, Box<dyn Error>> {
+        infos: &[PresetInfo],
+        zones: &[Zone],
+        instruments: &[Instrument],
+    ) -> Result<Vec<Preset>, SoundFontError> {
         if infos.len() <= 1 {
-            return Err(format!("No valid preset was found.").into());
+            return Err(SoundFontError::PresetNotFound);
         }
 
         // The last one is the terminator.
         let count = infos.len() - 1;
 
         let mut presets: Vec<Preset> = Vec::new();
-        for i in 0..count {
-            presets.push(Preset::new(&infos[i], &zones, &instruments)?);
+        for (preset_id, info) in infos.iter().take(count).enumerate() {
+            presets.push(Preset::new(info, preset_id, zones, instruments)?);
         }
 
         Ok(presets)
     }
 
+    /// Gets the name of the preset.
     pub fn get_name(&self) -> &str {
         &self.name
     }
 
+    /// Gets the patch number of the preset.
     pub fn get_patch_number(&self) -> i32 {
         self.patch_number
     }
 
+    /// Gets the bank number of the preset.
     pub fn get_bank_number(&self) -> i32 {
         self.bank_number
     }
 
+    /// Gets the library info.
     pub fn get_library(&self) -> i32 {
         self.library
     }
 
+    /// Gets the genre info.
     pub fn get_genre(&self) -> i32 {
         self.genre
     }
 
+    /// Gets the morphology info.
     pub fn get_morphology(&self) -> i32 {
         self.morphology
     }
 
+    /// Gets the regions of the preset.
     pub fn get_regions(&self) -> &[PresetRegion] {
         &self.regions[..]
     }

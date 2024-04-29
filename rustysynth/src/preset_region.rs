@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 
-use std::error::Error;
-
+use crate::error::SoundFontError;
 use crate::generator::Generator;
 use crate::generator_type::GeneratorType;
 use crate::instrument::Instrument;
@@ -17,6 +16,8 @@ fn set_parameter(gs: &mut [i16; GeneratorType::COUNT], generator: &Generator) {
     }
 }
 
+/// Represents a preset region.
+/// A preset region indicates how the parameters of the instrument should be modified in the preset.
 #[non_exhaustive]
 pub struct PresetRegion {
     pub(crate) gs: [i16; GeneratorType::COUNT],
@@ -25,11 +26,11 @@ pub struct PresetRegion {
 
 impl PresetRegion {
     fn new(
-        name: &String,
+        preset_id: usize,
         global: &Zone,
         local: &Zone,
-        samples: &Vec<Instrument>,
-    ) -> Result<Self, Box<dyn Error>> {
+        samples: &[Instrument],
+    ) -> Result<Self, SoundFontError> {
         let mut gs: [i16; GeneratorType::COUNT] = [0; GeneratorType::COUNT];
         gs[GeneratorType::KEY_RANGE as usize] = 0x7F00;
         gs[GeneratorType::VELOCITY_RANGE as usize] = 0x7F00;
@@ -42,26 +43,27 @@ impl PresetRegion {
             set_parameter(&mut gs, generator);
         }
 
-        let id = gs[GeneratorType::INSTRUMENT as usize] as usize;
-        if id >= samples.len() {
-            return Err(
-                format!("The preset '{name}' contains an invalid instrument ID '{id}'.").into(),
-            );
+        let instrument_id = gs[GeneratorType::INSTRUMENT as usize] as usize;
+        if instrument_id >= samples.len() {
+            return Err(SoundFontError::InvalidInstrumentId {
+                preset_id,
+                instrument_id,
+            });
         }
 
         Ok(Self {
-            gs: gs,
-            instrument: id,
+            gs,
+            instrument: instrument_id,
         })
     }
 
     pub(crate) fn create(
-        name: &String,
+        preset_id: usize,
         zones: &[Zone],
-        instruments: &Vec<Instrument>,
-    ) -> Result<Vec<PresetRegion>, Box<dyn Error>> {
+        instruments: &[Instrument],
+    ) -> Result<Vec<PresetRegion>, SoundFontError> {
         // Is the first one the global zone?
-        if zones[0].generators.len() == 0
+        if zones[0].generators.is_empty()
             || zones[0].generators.last().unwrap().generator_type != GeneratorType::INSTRUMENT
         {
             // The first one is the global zone.
@@ -72,10 +74,10 @@ impl PresetRegion {
             let mut regions: Vec<PresetRegion> = Vec::new();
             for i in 0..count {
                 regions.push(PresetRegion::new(
-                    name,
+                    preset_id,
                     global,
                     &zones[i + 1],
-                    &instruments,
+                    instruments,
                 )?);
             }
 
@@ -84,12 +86,12 @@ impl PresetRegion {
             // No global zone.
             let count = zones.len();
             let mut regions: Vec<PresetRegion> = Vec::new();
-            for i in 0..count {
+            for zone in zones.iter().take(count) {
                 regions.push(PresetRegion::new(
-                    name,
+                    preset_id,
                     &Zone::empty(),
-                    &zones[i],
-                    &instruments,
+                    zone,
+                    instruments,
                 )?);
             }
 
@@ -97,11 +99,18 @@ impl PresetRegion {
         }
     }
 
+    /// Checks if the region covers the given key and velocity.
+    /// Returns `true` if the region covers the given key and velocity.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key of a note.
+    /// * `velocity` - The velocity of a note.
     pub fn contains(&self, key: i32, velocity: i32) -> bool {
         let contains_key = self.get_key_range_start() <= key && key <= self.get_key_range_end();
         let contains_velocity = self.get_velocity_range_start() <= velocity
             && velocity <= self.get_velocity_range_end();
-        return contains_key && contains_velocity;
+        contains_key && contains_velocity
     }
 
     pub fn get_modulation_lfo_to_pitch(&self) -> i32 {
@@ -288,5 +297,9 @@ impl PresetRegion {
 
     pub fn get_scale_tuning(&self) -> i32 {
         self.gs[GeneratorType::SCALE_TUNING as usize] as i32
+    }
+
+    pub fn get_instrument_id(&self) -> usize {
+        self.instrument
     }
 }

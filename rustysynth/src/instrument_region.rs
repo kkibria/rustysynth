@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 
-use std::error::Error;
-
+use crate::error::SoundFontError;
 use crate::generator::Generator;
 use crate::generator_type::GeneratorType;
 use crate::loop_mode::LoopMode;
@@ -18,6 +17,8 @@ fn set_parameter(gs: &mut [i16; GeneratorType::COUNT], generator: &Generator) {
     }
 }
 
+/// Represents an instrument region.
+/// An instrument region contains all the parameters necessary to synthesize a note.
 #[non_exhaustive]
 pub struct InstrumentRegion {
     pub(crate) gs: [i16; GeneratorType::COUNT],
@@ -32,11 +33,11 @@ pub struct InstrumentRegion {
 
 impl InstrumentRegion {
     fn new(
-        name: &String,
+        instrument_id: usize,
         global: &Zone,
         local: &Zone,
-        samples: &Vec<SampleHeader>,
-    ) -> Result<Self, Box<dyn Error>> {
+        samples: &[SampleHeader],
+    ) -> Result<Self, SoundFontError> {
         let mut gs: [i16; GeneratorType::COUNT] = [0; GeneratorType::COUNT];
         gs[GeneratorType::INITIAL_FILTER_CUTOFF_FREQUENCY as usize] = 13500;
         gs[GeneratorType::DELAY_MODULATION_LFO as usize] = -12000;
@@ -66,16 +67,17 @@ impl InstrumentRegion {
             set_parameter(&mut gs, generator);
         }
 
-        let id = gs[GeneratorType::SAMPLE_ID as usize] as usize;
-        if id >= samples.len() {
-            return Err(
-                format!("The instrument '{name}' contains an invalid sample ID '{id}'.").into(),
-            );
+        let sample_id = gs[GeneratorType::SAMPLE_ID as usize] as usize;
+        if sample_id >= samples.len() {
+            return Err(SoundFontError::InvalidSampleId {
+                instrument_id,
+                sample_id,
+            });
         }
-        let sample = &samples[id];
+        let sample = &samples[sample_id];
 
         Ok(Self {
-            gs: gs,
+            gs,
             sample_start: sample.start,
             sample_end: sample.end,
             sample_start_loop: sample.start_loop,
@@ -87,12 +89,12 @@ impl InstrumentRegion {
     }
 
     pub(crate) fn create(
-        name: &String,
+        instrument_id: usize,
         zones: &[Zone],
-        samples: &Vec<SampleHeader>,
-    ) -> Result<Vec<InstrumentRegion>, Box<dyn Error>> {
+        samples: &[SampleHeader],
+    ) -> Result<Vec<InstrumentRegion>, SoundFontError> {
         // Is the first one the global zone?
-        if zones[0].generators.len() == 0
+        if zones[0].generators.is_empty()
             || zones[0].generators.last().unwrap().generator_type != GeneratorType::SAMPLE_ID
         {
             // The first one is the global zone.
@@ -103,10 +105,10 @@ impl InstrumentRegion {
             let mut regions: Vec<InstrumentRegion> = Vec::new();
             for i in 0..count {
                 regions.push(InstrumentRegion::new(
-                    name,
+                    instrument_id,
                     global,
                     &zones[i + 1],
-                    &samples,
+                    samples,
                 )?);
             }
 
@@ -115,12 +117,12 @@ impl InstrumentRegion {
             // No global zone.
             let count = zones.len();
             let mut regions: Vec<InstrumentRegion> = Vec::new();
-            for i in 0..count {
+            for zone in zones.iter().take(count) {
                 regions.push(InstrumentRegion::new(
-                    name,
+                    instrument_id,
                     &Zone::empty(),
-                    &zones[i],
-                    &samples,
+                    zone,
+                    samples,
                 )?);
             }
 
@@ -128,11 +130,18 @@ impl InstrumentRegion {
         }
     }
 
+    /// Checks if the region covers the given key and velocity.
+    /// Returns `true` if the region covers the given key and velocity.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key of a note.
+    /// * `velocity` - The velocity of a note.
     pub fn contains(&self, key: i32, velocity: i32) -> bool {
         let contains_key = self.get_key_range_start() <= key && key <= self.get_key_range_end();
         let contains_velocity = self.get_velocity_range_start() <= velocity
             && velocity <= self.get_velocity_range_end();
-        return contains_key && contains_velocity;
+        contains_key && contains_velocity
     }
 
     pub fn get_sample_start(&self) -> i32 {
@@ -373,5 +382,9 @@ impl InstrumentRegion {
         } else {
             self.sample_original_pitch
         }
+    }
+
+    pub fn get_sample_id(&self) -> usize {
+        self.gs[GeneratorType::SAMPLE_ID as usize] as usize
     }
 }
